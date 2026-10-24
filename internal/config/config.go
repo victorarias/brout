@@ -19,11 +19,16 @@ import (
 // measured provider latency and well under the TypeSafe SDK's 10 s attempt
 // timeout (F5), or a hanging first attempt never reaches failover.
 //
-// Receipt (C3, 2026-10-25, typesafe/jev-latest -> jev-1.14.0, 10 runs each of
-// 3 questions, measured at the caller with curl):
+// Receipt (C3, 2026-10-25, scripts/latency.sh: typesafe/jev-latest answering
+// as jev-1.14.0, 3 questions, 10 runs per row, curl's time_total):
 //
-//	short state:          see PR; filled from the measurement
-//	~100K-token state:    see PR; filled from the measurement
+//	                                  direct to TypeSafe   through brout
+//	short state (370 tokens)          0.22 to 0.85 s       0.17 to 0.38 s
+//	long state (30,581 tokens)        0.50 to 0.75 s       0.38 to 0.46 s
+//
+// jev takes at most about 32.8K input tokens, so the long state sits near
+// the largest request TypeSafe answers. 4 s is about 5 times the slowest run
+// and leaves 6 s of the SDK's 10 s for a second routing model.
 const DefaultAttemptTimeout = 4 * time.Second
 
 const DefaultListen = "127.0.0.1:7979"

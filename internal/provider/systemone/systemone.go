@@ -106,8 +106,13 @@ func detail(raw []byte) string {
 		ErrorType string `json:"error_type"`
 		Message   string `json:"message"`
 	}
-	if json.Unmarshal(body.Detail, &shaped) == nil && shaped.Message != "" {
-		return shaped.ErrorType + ": " + shaped.Message
+	if json.Unmarshal(body.Detail, &shaped) == nil {
+		switch {
+		case shaped.ErrorType != "" && shaped.Message != "":
+			return shaped.ErrorType + ": " + shaped.Message
+		case shaped.ErrorType != "":
+			return shaped.ErrorType // TypeSafe's max_tokens_exceeded has no message
+		}
 	}
 	var text string
 	if json.Unmarshal(body.Detail, &text) == nil {

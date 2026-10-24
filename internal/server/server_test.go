@@ -401,6 +401,10 @@ func TestErrors(t *testing.T) {
 			status: 400, typ: "rejected", message: "typesafe/jev-latest answered 400: api_usage_error: Invalid request.", reachesT: true,
 		},
 		{
+			name: "rejected for too many tokens", body: request(`"typesafe/jev-latest"`), model: fails(400, `{"detail":{"error_type":"max_tokens_exceeded"}}`),
+			status: 400, typ: "rejected", message: "typesafe/jev-latest answered 400: max_tokens_exceeded", reachesT: true,
+		},
+		{
 			name: "rejected with a detail list", body: request(`"typesafe/jev-latest"`), model: fails(422, `{"detail":[{"type":"missing","loc":["body","state"],"msg":"Field required"}]}`),
 			status: 422, typ: "rejected", message: `typesafe/jev-latest answered 422: [{"type":"missing","loc":["body","state"],"msg":"Field required"}]`, reachesT: true,
 		},
