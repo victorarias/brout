@@ -102,6 +102,7 @@ func newFake(t *testing.T, h http.HandlerFunc) *fakeProvider {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		f.mu.Lock()
 		f.bodies = append(f.bodies, body)
 		f.auth = append(f.auth, r.Header.Get("Authorization"))
@@ -118,13 +119,40 @@ func (f *fakeProvider) calls() int {
 	return len(f.bodies)
 }
 
+// answers answers every question it is asked, as model, with the first
+// choice and the lowest level.
 func answers(model string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, strings.Replace(liveAnswer, "jev-1.14.0", model, 1))
+		var req struct {
+			Questions map[string]struct {
+				Type     string
+				Criteria json.RawMessage
+			}
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		out := map[string]any{}
+		for name, q := range req.Questions {
+			switch q.Type {
+			case "noul":
+				out[name] = map[string]any{"type": "noul", "noul": 0.5}
+			case "choice":
+				dec := json.NewDecoder(bytes.NewReader(q.Criteria))
+				dec.Token()
+				first, _ := dec.Token()
+				out[name] = map[string]any{"type": "choice", "choice": first, "confidence": 1, "probabilities": map[string]float64{first.(string): 1}}
+			case "score":
+				out[name] = map[string]any{"type": "score", "score": 0, "confidence": 1, "legend": map[string]any{}, "probabilities": map[string]float64{"0": 1}}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"model": model, "answers": out, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1}})
 	}
 }
 
-func fails(status int, body string) http.HandlerFunc {
+func replies(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -260,7 +288,7 @@ func (r reply) errorOf(t *testing.T) (string, string) {
 var requestID = regexp.MustCompile(`^20261025-153012-[0-9a-f]{6}$`)
 
 func TestNamedModelAnswers(t *testing.T) {
-	ts := newFake(t, answers("jev-1.14.0"))
+	ts := newFake(t, replies(200, liveAnswer))
 	subq := newFake(t, answers("subq-snap-1.1"))
 	g := newGateway(t, setup{typesafe: ts, subq: subq, routing: []string{"subq/subq-snap-1.1"}})
 
@@ -357,7 +385,7 @@ func gzipped(t *testing.T, data []byte) []byte {
 // TestErrors covers every row of the error_type table.
 func TestErrors(t *testing.T) {
 	fixedClock := &fakeClock{}
-	tooLarge := gzipped(t, append(append([]byte(`{"state": "`), bytes.Repeat([]byte("a"), server.BodyLimit)...), `", "questions": {}}`...))
+	longName := strings.Repeat("n", 101)
 
 	cases := []struct {
 		name     string
@@ -368,7 +396,8 @@ func TestErrors(t *testing.T) {
 		status   int
 		typ      string
 		message  string
-		reachesT bool // typesafe is called
+		reachesT bool     // typesafe is called
+		stderr   []string // failover lines, after the request id
 	}{
 		{name: "malformed JSON", body: []byte(`{"state": `), status: 422, typ: "invalid_request", message: "not a JSON object"},
 		{name: "not an object", body: []byte(`[1]`), status: 422, typ: "invalid_request", message: "not a JSON object"},
@@ -397,19 +426,19 @@ func TestErrors(t *testing.T) {
 			message: `typesafe/jev-latest accepts at most 10 score levels; question "s" has 11; subq/subq-snap-1.1 accepts at most 10 score levels; question "s" has 11`,
 		},
 		{
-			name: "rejected", body: request(`"typesafe/jev-latest"`), model: fails(400, `{"detail":{"error_type":"api_usage_error","message":"Invalid request."}}`),
+			name: "rejected", body: request(`"typesafe/jev-latest"`), model: replies(400, `{"detail":{"error_type":"api_usage_error","message":"Invalid request."}}`),
 			status: 400, typ: "rejected", message: "typesafe/jev-latest answered 400: api_usage_error: Invalid request.", reachesT: true,
 		},
 		{
-			name: "rejected for too many tokens", body: request(`"typesafe/jev-latest"`), model: fails(400, `{"detail":{"error_type":"max_tokens_exceeded"}}`),
+			name: "rejected for too many tokens", body: request(`"typesafe/jev-latest"`), model: replies(400, `{"detail":{"error_type":"max_tokens_exceeded"}}`),
 			status: 400, typ: "rejected", message: "typesafe/jev-latest answered 400: max_tokens_exceeded", reachesT: true,
 		},
 		{
-			name: "rejected with a detail list", body: request(`"typesafe/jev-latest"`), model: fails(422, `{"detail":[{"type":"missing","loc":["body","state"],"msg":"Field required"}]}`),
+			name: "rejected with a detail list", body: request(`"typesafe/jev-latest"`), model: replies(422, `{"detail":[{"type":"missing","loc":["body","state"],"msg":"Field required"}]}`),
 			status: 422, typ: "rejected", message: `typesafe/jev-latest answered 422: [{"type":"missing","loc":["body","state"],"msg":"Field required"}]`, reachesT: true,
 		},
 		{
-			name: "named model unavailable", body: request(`"typesafe/jev-latest"`), model: fails(529, `{"detail":"overloaded"}`),
+			name: "named model unavailable", body: request(`"typesafe/jev-latest"`), model: replies(529, `{"detail":"overloaded"}`),
 			status: 529, typ: "unavailable", message: "typesafe/jev-latest answered 529: overloaded", reachesT: true,
 		},
 		{
@@ -421,14 +450,22 @@ func TestErrors(t *testing.T) {
 			status: 504, typ: "unavailable", message: "typesafe/jev-latest did not answer within 4s", reachesT: true,
 		},
 		{
-			name: "every routing model unavailable", body: request(""), model: fails(503, `{"detail":"down"}`), routing: []string{"typesafe/jev-latest", "subq/subq-snap-1.1"},
+			name: "every routing model unavailable", body: request(""), model: replies(503, `{"detail":"down"}`), routing: []string{"typesafe/jev-latest", "subq/subq-snap-1.1"},
 			status: 503, typ: "unavailable",
 			message:  "every model in the routing list was unavailable: typesafe/jev-latest answered 503: down; subq/subq-snap-1.1 answered 429: rate_limit_error: slow down",
 			reachesT: true,
+			stderr: []string{
+				"typesafe/jev-latest unavailable (503); trying subq/subq-snap-1.1",
+				"subq/subq-snap-1.1 unavailable (429); no models left",
+			},
 		},
 		{
-			name: "body too large", body: tooLarge, header: []string{"Content-Encoding", "gzip"},
+			name: "body too large", body: tooLarge(t), header: []string{"Content-Encoding", "gzip"},
 			status: 413, typ: "body_too_large", message: "up to 67108864 bytes (64 MiB)",
+		},
+		{
+			name: "question name over the limit", body: fmt.Appendf(nil, `{"model": "subq/subq-snap-1.1", "state": "x", "questions": {%q: {"type": "noul", "instructions": "?"}}}`, longName),
+			status: 422, typ: "limit", message: fmt.Sprintf("subq/subq-snap-1.1 accepts question names of at most 100 characters; question %q has 101", longName),
 		},
 	}
 	for _, c := range cases {
@@ -440,7 +477,7 @@ func TestErrors(t *testing.T) {
 			ts := newFake(t, h)
 			subq := newFake(t, answers("subq-snap-1.1"))
 			if c.name == "every routing model unavailable" {
-				subq = newFake(t, fails(429, `{"detail":{"error_type":"rate_limit_error","message":"slow down"}}`))
+				subq = newFake(t, replies(429, `{"detail":{"error_type":"rate_limit_error","message":"slow down"}}`))
 			}
 			routing := c.routing
 			if routing == nil {
@@ -466,11 +503,26 @@ func TestErrors(t *testing.T) {
 			if (ts.calls() > 0) != c.reachesT {
 				t.Errorf("typesafe called %d times", ts.calls())
 			}
-			if ex := g.exchanges(); len(ex) != 1 || ex[0].Status != c.status || !bytes.Equal(ex[0].Response, r.raw) {
-				t.Errorf("exchanges %+v", ex)
+			ex := g.exchanges()
+			if len(ex) != 1 || ex[0].Status != c.status || !bytes.Equal(ex[0].Response, r.raw) {
+				t.Fatalf("exchanges %+v", ex)
+			}
+			var want string
+			for _, line := range c.stderr {
+				want += ex[0].ID + " " + line + "\n"
+			}
+			if g.stderr.String() != want {
+				t.Errorf("stderr %q, want %q", g.stderr, want)
 			}
 		})
 	}
+}
+
+// tooLarge is a gzip body that decompresses past server.BodyLimit: one 1 MiB
+// gzip member repeated, which gzip readers decode as one stream.
+func tooLarge(t *testing.T) []byte {
+	member := gzipped(t, bytes.Repeat([]byte("a"), 1<<20))
+	return bytes.Repeat(member, server.BodyLimit>>20+1)
 }
 
 // TestFailover sends an auto request on to the next model for each
@@ -482,16 +534,19 @@ func TestFailover(t *testing.T) {
 		status int // the failed attempt's status
 		line   string
 	}{
-		{"401", fails(401, `{"detail":"bad key"}`), 401, "(401)"},
-		{"402", fails(402, `{"detail":"no credits"}`), 402, "(402)"},
-		{"403", fails(403, `{"detail":"forbidden"}`), 403, "(403)"},
-		{"429", fails(429, `{"detail":"slow down"}`), 429, "(429)"},
-		{"500", fails(500, `oops`), 500, "(500)"},
-		{"503", fails(503, `{"detail":"down"}`), 503, "(503)"},
-		{"529", fails(529, `{"detail":"overloaded"}`), 529, "(529)"},
+		{"401", replies(401, `{"detail":"bad key"}`), 401, "(401)"},
+		{"402", replies(402, `{"detail":"no credits"}`), 402, "(402)"},
+		{"403", replies(403, `{"detail":"forbidden"}`), 403, "(403)"},
+		{"429", replies(429, `{"detail":"slow down"}`), 429, "(429)"},
+		{"500", replies(500, `oops`), 500, "(500)"},
+		{"503", replies(503, `{"detail":"down"}`), 503, "(503)"},
+		{"529", replies(529, `{"detail":"overloaded"}`), 529, "(529)"},
 		{"connection closed", hangsUp, 0, "(no response)"},
 		{"timeout", nil, 0, "(no response)"},
-		{"unreadable 200", fails(200, `{"answers": "nope"}`), 0, "(no response)"},
+		{"unreadable 200", replies(200, `{"answers": "nope"}`), 0, "(no response)"},
+		{"200 without answers", replies(200, `{}`), 0, "(no response)"},
+		{"200 missing an answer", replies(200, strings.Replace(liveAnswer, `"positive":{"type":"noul","noul":0.98},`, "", 1)), 0, "(no response)"},
+		{"200 with a wrong answer type", replies(200, strings.Replace(liveAnswer, `"positive":{"type":"noul","noul":0.98}`, `"positive":{"type":"score","score":1}`, 1)), 0, "(no response)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -524,7 +579,7 @@ func TestFailover(t *testing.T) {
 func TestRejectionDoesNotFailOver(t *testing.T) {
 	for _, status := range []int{400, 404, 413, 415, 422} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			ts := newFake(t, fails(status, `{"detail":"caller bug"}`))
+			ts := newFake(t, replies(status, `{"detail":"caller bug"}`))
 			subq := newFake(t, answers("subq-snap-1.1"))
 			g := newGateway(t, setup{typesafe: ts, subq: subq, routing: []string{"typesafe/jev-latest", "subq/subq-snap-1.1"}})
 
@@ -540,7 +595,7 @@ func TestRejectionDoesNotFailOver(t *testing.T) {
 }
 
 func TestNamedModelDoesNotFailOver(t *testing.T) {
-	ts := newFake(t, fails(529, `{"detail":"overloaded"}`))
+	ts := newFake(t, replies(529, `{"detail":"overloaded"}`))
 	subq := newFake(t, answers("subq-snap-1.1"))
 	g := newGateway(t, setup{typesafe: ts, subq: subq, routing: []string{"typesafe/jev-latest", "subq/subq-snap-1.1"}})
 
@@ -560,6 +615,17 @@ func TestAutoSkipsModelsWhoseLimitsRejectRequest(t *testing.T) {
 
 	// SubQ takes 2 to 255 choice options; TypeSafe takes 1.
 	r := g.post(t, []byte(`{"state": "x", "questions": {"c": {"type": "choice", "criteria": {"only": null}}}}`))
+	if r.status != 200 || r.body["model"] != "typesafe/jev-1.14.0" || subq.calls() != 0 {
+		t.Errorf("status %d, subq calls %d: %s", r.status, subq.calls(), r.raw)
+	}
+}
+
+func TestAutoSkipsModelsWhoseNameLimitRejectsRequest(t *testing.T) {
+	ts := newFake(t, answers("jev-1.14.0"))
+	subq := newFake(t, answers("subq-snap-1.1"))
+	g := newGateway(t, setup{typesafe: ts, subq: subq, routing: []string{"subq/subq-snap-1.1", "typesafe/jev-latest"}})
+
+	r := g.post(t, fmt.Appendf(nil, `{"state": "x", "questions": {%q: {"type": "noul", "instructions": "?"}}}`, strings.Repeat("n", 101)))
 	if r.status != 200 || r.body["model"] != "typesafe/jev-1.14.0" || subq.calls() != 0 {
 		t.Errorf("status %d, subq calls %d: %s", r.status, subq.calls(), r.raw)
 	}
@@ -620,6 +686,9 @@ func TestModels(t *testing.T) {
 	if r.status != 200 || strings.TrimSpace(string(r.raw)) != want {
 		t.Errorf("status %d:\n got %s\nwant %s", r.status, r.raw, want)
 	}
+	if !requestID.MatchString(r.header.Get("Brout-Request-Id")) {
+		t.Errorf("Brout-Request-Id %q", r.header.Get("Brout-Request-Id"))
+	}
 }
 
 func TestErrorMessagesKeepAngleBrackets(t *testing.T) {
@@ -636,6 +705,9 @@ func TestUnknownRoute(t *testing.T) {
 	r := do(t, req)
 	if typ, msg := r.errorOf(t); r.status != 404 || typ != "not_found" || !strings.Contains(msg, "GET /v1/systemone") {
 		t.Errorf("status %d: %s", r.status, r.raw)
+	}
+	if !requestID.MatchString(r.header.Get("Brout-Request-Id")) {
+		t.Errorf("Brout-Request-Id %q", r.header.Get("Brout-Request-Id"))
 	}
 }
 

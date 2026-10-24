@@ -161,6 +161,11 @@ func (r *Router) attempt(ctx context.Context, id string, req decision.Request) (
 	res, err := r.providers[name].Decide(actx, model, req)
 	a = Attempt{Model: id, Duration: r.clock.Now().Sub(start)}
 	if err == nil {
+		if why := res.Unanswered(req); why != "" {
+			err = &provider.Error{Unavailable: true, Message: fmt.Sprintf("%s answered 200 but %s", id, why)}
+		}
+	}
+	if err == nil {
 		a.Status = http.StatusOK
 		if res.Model == "" {
 			res.Model = model

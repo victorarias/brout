@@ -28,6 +28,7 @@ var (
 			Questions:     provider.Range{Min: 1, Max: 128},
 			ChoiceOptions: provider.Range{Min: 2, Max: 255},
 			ScoreLevels:   provider.Range{Min: 2, Max: 10},
+			NameLength:    100,
 		},
 	}
 )

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 )
 
 // Type is a question or answer type.
@@ -63,6 +64,29 @@ type Answer struct {
 	Confidence    *float64                   `json:"confidence,omitempty"`
 	Legend        map[string]json.RawMessage `json:"legend,omitempty"`
 	Probabilities map[string]float64         `json:"probabilities,omitempty"`
+}
+
+// Unanswered returns why res does not answer every question of req with the
+// question's type, or "" when it does.
+func (res Response) Unanswered(req Request) string {
+	names := make([]string, 0, len(req.Questions))
+	for name := range req.Questions {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		q := req.Questions[name]
+		a, ok := res.Answers[name]
+		switch {
+		case !ok:
+			return fmt.Sprintf("no answer for question %q", name)
+		case a.Type != q.Type:
+			return fmt.Sprintf("the answer for %s question %q has type %q", q.Type, name, a.Type)
+		case q.Type == Noul && a.Noul == nil, q.Type == Choice && a.Choice == nil, q.Type == Score && a.Score == nil:
+			return fmt.Sprintf("the answer for %s question %q has no %s value", q.Type, name, q.Type)
+		}
+	}
+	return ""
 }
 
 // Error is an error brout returns to its caller, in the shape

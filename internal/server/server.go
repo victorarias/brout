@@ -58,11 +58,14 @@ func New(opts Options) *Server {
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+// ServeHTTP gives every response a Brout-Request-Id.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Brout-Request-Id", s.requestID())
+	s.mux.ServeHTTP(w, r)
+}
 
 func (s *Server) systemOne(w http.ResponseWriter, r *http.Request) {
-	ex := Exchange{ID: s.requestID(), Start: s.opts.Now()}
-	w.Header().Set("Brout-Request-Id", ex.ID)
+	ex := Exchange{ID: w.Header().Get("Brout-Request-Id"), Start: s.opts.Now()}
 
 	body, err := readBody(r)
 	ex.Request = body

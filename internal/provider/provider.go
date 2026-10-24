@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/victorarias/brout/internal/decision"
 )
@@ -21,6 +22,7 @@ type Provider interface {
 // Limits are the request limits a provider documents (F3).
 type Limits struct {
 	Questions, ChoiceOptions, ScoreLevels Range // a zero Range is unknown and unchecked
+	NameLength                            int   // most characters in a question name; zero is unchecked
 }
 
 // Range is an inclusive count range.
@@ -37,6 +39,9 @@ func (l Limits) Check(modelID string, req decision.Request) string {
 	}
 	slices.Sort(names)
 	for _, name := range names {
+		if n := utf8.RuneCountInString(name); l.NameLength > 0 && n > l.NameLength {
+			return fmt.Sprintf("%s accepts question names of at most %d characters; question %q has %d", modelID, l.NameLength, name, n)
+		}
 		q := req.Questions[name]
 		var msg string
 		switch q.Type {
