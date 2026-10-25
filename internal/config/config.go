@@ -108,16 +108,20 @@ type Client struct {
 }
 
 // Load reads and checks the config at path. Every error names the bad field.
-func Load(path string) (Config, error) { return load(path, true) }
+func Load(path string) (Config, error) { return load(path, true, false) }
+
+// LoadService checks keys for launchd, which does not inherit shell variables.
+// It shares serve's validation without copying keys into the LaunchAgent.
+func LoadService(path string) (Config, error) { return load(path, true, true) }
 
 // LoadClient reads the config at path without resolving API keys, so the
 // client commands work in a shell that lacks serve's api_key_env variables.
 func LoadClient(path string) (Client, error) {
-	cfg, err := load(path, false)
+	cfg, err := load(path, false, false)
 	return Client{Listen: cfg.Listen, Log: cfg.Log}, err
 }
 
-func load(path string, resolveKeys bool) (Config, error) {
+func load(path string, resolveKeys, service bool) (Config, error) {
 	var f file
 	md, err := toml.DecodeFile(path, &f)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -168,6 +172,9 @@ func load(path string, resolveKeys bool) (Config, error) {
 		case p.APIKey != "" && p.APIKeyEnv != "":
 			return Config{}, fmt.Errorf("%s: %s sets both api_key and api_key_env; keep one", path, field)
 		case p.APIKeyEnv != "":
+			if service {
+				return Config{}, fmt.Errorf("%s: %s.api_key_env names %s; launchd does not inherit your shell environment; put the key in the config as api_key", path, field, p.APIKeyEnv)
+			}
 			key = os.Getenv(p.APIKeyEnv)
 			if key == "" {
 				return Config{}, fmt.Errorf("%s: %s.api_key_env names %s, which is not set in brout's environment (launchd does not pass on your shell's); put the key in the config as api_key", path, field, p.APIKeyEnv)

@@ -23,14 +23,21 @@ import (
 	"github.com/victorarias/brout/internal/server"
 )
 
+var version = "dev"
+
 const usage = `usage: brout <command> [flags]
 
 commands:
+  version               print the brout version
   serve                 run the gateway (POST /v1/systemone, GET /v1/models)
   logs [--limit n]      list the newest requests in the request log
   logs show <id>        print one request log entry
   replay <id> [--model <model id>]
                         send a logged request through the running gateway again
+  service install [--config path]
+                        install and load a macOS LaunchAgent
+  service uninstall     stop the LaunchAgent and remove its plist
+  service status        show whether it is loaded and its configured address
 `
 
 func main() {
@@ -50,6 +57,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		return errors.New("no command")
 	}
 	switch args[0] {
+	case "version":
+		fmt.Fprintln(stdout, "brout "+version)
+		return nil
 	case "serve":
 		return serve(ctx, args[1:], stdout, stderr, ready)
 	case "logs":
@@ -59,6 +69,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		return logs(args[1:], stdout, stderr)
 	case "replay":
 		return replay(ctx, args[1:], stdout, stderr)
+	case "service":
+		return serviceCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return nil
