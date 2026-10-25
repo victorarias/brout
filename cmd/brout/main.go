@@ -18,6 +18,7 @@ import (
 	"github.com/victorarias/brout/internal/provider"
 	"github.com/victorarias/brout/internal/provider/openai"
 	"github.com/victorarias/brout/internal/provider/systemone"
+	"github.com/victorarias/brout/internal/requestlog"
 	"github.com/victorarias/brout/internal/router"
 	"github.com/victorarias/brout/internal/server"
 )
@@ -25,7 +26,11 @@ import (
 const usage = `usage: brout <command> [flags]
 
 commands:
-  serve    run the gateway (POST /v1/systemone, GET /v1/models)
+  serve                 run the gateway (POST /v1/systemone, GET /v1/models)
+  logs [--limit n]      list the newest requests in the request log
+  logs show <id>        print one request log entry
+  replay <id> [--model <model id>]
+                        send a logged request through the running gateway again
 `
 
 func main() {
@@ -47,6 +52,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 	switch args[0] {
 	case "serve":
 		return serve(ctx, args[1:], stdout, stderr, ready)
+	case "logs":
+		if len(args) > 1 && args[1] == "show" {
+			return logsShow(args[2:], stdout, stderr)
+		}
+		return logs(args[1:], stdout, stderr)
+	case "replay":
+		return replay(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return nil
@@ -71,16 +83,23 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer, ready f
 		return err
 	}
 
-	srv := server.New(server.Options{
+	opts := server.Options{
 		Router: router.New(providers, cfg.Routing, cfg.AttemptTimeout, router.RealClock{}),
 		Now:    time.Now,
 		Stderr: stderr,
-	})
+	}
+	if cfg.Log.Enabled {
+		opts.Finish = requestlog.NewWriter(cfg.Log.Dir, stderr).Finish
+	}
+	srv := server.New(opts)
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen on %s (config listen): %w", cfg.Listen, err)
 	}
 	fmt.Fprintf(stdout, "brout listening on http://%s\n", ln.Addr())
+	if cfg.Log.Enabled {
+		fmt.Fprintf(stdout, "brout logging requests to %s\n", cfg.Log.Dir)
+	}
 	if ready != nil {
 		ready(ln.Addr().String())
 	}

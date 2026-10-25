@@ -100,8 +100,24 @@ func DefaultPath() string {
 	return filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "brout", "config.toml")
 }
 
+// Client is what brout's client commands, logs and replay, need from the
+// config.
+type Client struct {
+	Listen string
+	Log    Log
+}
+
 // Load reads and checks the config at path. Every error names the bad field.
-func Load(path string) (Config, error) {
+func Load(path string) (Config, error) { return load(path, true) }
+
+// LoadClient reads the config at path without resolving API keys, so the
+// client commands work in a shell that lacks serve's api_key_env variables.
+func LoadClient(path string) (Client, error) {
+	cfg, err := load(path, false)
+	return Client{Listen: cfg.Listen, Log: cfg.Log}, err
+}
+
+func load(path string, resolveKeys bool) (Config, error) {
 	var f file
 	md, err := toml.DecodeFile(path, &f)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -140,6 +156,9 @@ func Load(path string) (Config, error) {
 	}
 	if f.Log.Dir != "" {
 		cfg.Log.Dir = expandHome(f.Log.Dir)
+	}
+	if !resolveKeys {
+		return cfg, nil
 	}
 
 	for name, p := range f.Providers {

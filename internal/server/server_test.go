@@ -19,6 +19,7 @@ import (
 
 	"github.com/victorarias/brout/internal/provider"
 	"github.com/victorarias/brout/internal/provider/systemone"
+	"github.com/victorarias/brout/internal/requestlog"
 	"github.com/victorarias/brout/internal/router"
 	"github.com/victorarias/brout/internal/server"
 )
@@ -46,14 +47,29 @@ func request(model string) []byte {
 
 var clock = time.Date(2026, 10, 25, 15, 30, 12, 0, time.UTC)
 
-// fakeClock stands still at clock. Its timers fire only when a test fires them.
+// fakeClock stands still at clock, or where set moves it. Its timers fire only
+// when a test fires them.
 type fakeClock struct {
 	mu     sync.Mutex
+	at     time.Time
 	timers map[int]func()
 	next   int
 }
 
-func (c *fakeClock) Now() time.Time { return clock }
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.at.IsZero() {
+		return clock
+	}
+	return c.at
+}
+
+func (c *fakeClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = t
+}
 
 func (c *fakeClock) AfterFunc(d time.Duration, f func()) func() bool {
 	c.mu.Lock()
@@ -205,6 +221,7 @@ type setup struct {
 	routing        []string
 	clock          *fakeClock
 	finished       chan server.Exchange
+	logDir         string // set, brout serve's request log writes here
 }
 
 func newGateway(t *testing.T, s setup) *gateway {
@@ -224,11 +241,18 @@ func newGateway(t *testing.T, s setup) *gateway {
 		s.clock = &fakeClock{}
 	}
 	g := &gateway{stderr: &syncBuffer{}}
+	var log *requestlog.Writer
+	if s.logDir != "" {
+		log = requestlog.NewWriter(s.logDir, g.stderr)
+	}
 	srv := server.New(server.Options{
 		Router: router.New(providers, s.routing, 4*time.Second, s.clock),
 		Now:    s.clock.Now,
 		Stderr: g.stderr,
 		Finish: func(ex server.Exchange) {
+			if log != nil {
+				log.Finish(ex)
+			}
 			g.mu.Lock()
 			g.done = append(g.done, ex)
 			g.mu.Unlock()

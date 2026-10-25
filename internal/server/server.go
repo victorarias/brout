@@ -36,6 +36,7 @@ type Exchange struct {
 	Response       []byte // the body brout answered with, answer or error
 	Model          string // the model id that answered; "" when none did
 	Attempts       []router.Attempt
+	ReplayOf       string // the Brout-Replay-Of header: the id brout replay replays; "" otherwise
 }
 
 type Options struct {
@@ -65,7 +66,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) systemOne(w http.ResponseWriter, r *http.Request) {
-	ex := Exchange{ID: w.Header().Get("Brout-Request-Id"), Start: s.opts.Now()}
+	ex := Exchange{ID: w.Header().Get("Brout-Request-Id"), Start: s.opts.Now(), ReplayOf: r.Header.Get("Brout-Replay-Of")}
 
 	body, err := readBody(r)
 	ex.Request = body
