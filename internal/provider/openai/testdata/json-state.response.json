@@ -1,0 +1,61 @@
+{
+  "model": "gpt-6-luna",
+  "answers": [
+    {
+      "type": "predicate",
+      "name": "positive",
+      "probability": 0.99
+    },
+    {
+      "type": "choice",
+      "name": "topic",
+      "choice": "praise",
+      "probabilities": [
+        {
+          "value": "praise",
+          "probability": 1.0
+        },
+        {
+          "value": "complaint",
+          "probability": 0.0
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "type": "score",
+      "name": "stars",
+      "score": 2.0,
+      "probabilities": [
+        {
+          "value": 0,
+          "label": "0",
+          "probability": 0.0
+        },
+        {
+          "value": 1,
+          "label": "1",
+          "probability": 0.0
+        },
+        {
+          "value": 2,
+          "label": "2",
+          "probability": 1.0
+        }
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "usage": {
+    "input_tokens": 385,
+    "input_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "output_tokens": 0,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 385
+  }
+}
