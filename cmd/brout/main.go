@@ -31,6 +31,10 @@ commands:
   logs show <id>        print one request log entry
   replay <id> [--model <model id>]
                         send a logged request through the running gateway again
+  service install [--config path]
+                        install and load a macOS LaunchAgent
+  service uninstall     stop the LaunchAgent and remove its plist
+  service status        show whether it is loaded and its configured address
 `
 
 func main() {
@@ -59,6 +63,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ready fun
 		return logs(args[1:], stdout, stderr)
 	case "replay":
 		return replay(ctx, args[1:], stdout, stderr)
+	case "service":
+		return serviceCommand(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return nil
