@@ -123,8 +123,13 @@ type content struct {
 
 func translate(model string, req decision.Request) request {
 	out := request{Model: model, Input: json.RawMessage(req.State)}
-	if req.State[0] != '"' {
-		out.Input = []message{{Role: "user", Content: []content{{Type: "input_json", Data: req.State}}}}
+	switch req.State[0] {
+	case '{':
+		out.Input = inputJSON(req.State)
+	case '[':
+		// input_json data must be an object or an array of objects; an array
+		// of strings is a 400. Every array goes wrapped, so the rule is one.
+		out.Input = inputJSON(append(append([]byte(`{"state":`), req.State...), '}'))
 	}
 	names := make([]string, 0, len(req.Questions))
 	for name := range req.Questions {
@@ -158,6 +163,10 @@ func translate(model string, req decision.Request) request {
 		out.Questions = append(out.Questions, oq)
 	}
 	return out
+}
+
+func inputJSON(data json.RawMessage) []message {
+	return []message{{Role: "user", Content: []content{{Type: "input_json", Data: data}}}}
 }
 
 // text renders a System One description or instructions as OpenAI's text: a

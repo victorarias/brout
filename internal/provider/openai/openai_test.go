@@ -218,7 +218,8 @@ func TestTextState(t *testing.T) {
 	}
 }
 
-// F2: an object or array state goes on as input_json, byte for byte.
+// F2: an object state goes on as input_json, byte for byte. An array goes
+// wrapped as {"state": array}: OpenAI answers a bare array of strings with 400.
 func TestJSONState(t *testing.T) {
 	oa := newFake(t, "/v1/decisions", replies(200, fixture(t, "json-state.response.json")))
 	url := gateway(t, oa, nil)
@@ -232,7 +233,7 @@ func TestJSONState(t *testing.T) {
 	oa = newFake(t, "/v1/decisions", replies(200, fixture(t, "json-state.response.json")))
 	url = gateway(t, oa, nil)
 	post(t, url, fmt.Sprintf(threeQuestions, `"openai/gpt-6-luna"`, `[1, "two"]`))
-	if got := asJSON(oa.sent(t)["input"]); got != `[{"content":[{"data":[1,"two"],"type":"input_json"}],"role":"user"}]` {
+	if got := asJSON(oa.sent(t)["input"]); got != `[{"content":[{"data":{"state":[1,"two"]},"type":"input_json"}],"role":"user"}]` {
 		t.Errorf("input %s", got)
 	}
 }
@@ -284,6 +285,14 @@ func TestRefusal(t *testing.T) {
 	}
 	if ts.calls() != 0 {
 		t.Errorf("a refusal failed over to typesafe")
+	}
+
+	// Only the refused question is named when others were answered.
+	oa = newFake(t, "/v1/decisions", replies(200, []byte(`{"model":"gpt-6-luna","answers":[{"type":"predicate","name":"fine","probability":0.5},{"type":"refusal","name":"weapon"}],"usage":{"input_tokens":1,"output_tokens":0}}`)))
+	url = gateway(t, oa, nil)
+	r := post(t, url, `{"model": "openai/gpt-6-luna", "state": "x", "questions": {"fine": {"type": "noul"}, "weapon": {"type": "noul"}}}`)
+	if _, msg := r.errorOf(t); r.status != 422 || msg != `openai/gpt-6-luna refused to answer question "weapon"` {
+		t.Errorf("%d %q", r.status, msg)
 	}
 }
 
