@@ -1,0 +1,44 @@
+{
+  "model": "gpt-6-luna",
+  "input": "The user wrote: I love this product, it works great!",
+  "questions": [
+    {
+      "name": "positive",
+      "type": "predicate",
+      "instructions": "Is the user happy?"
+    },
+    {
+      "name": "topic",
+      "type": "choice",
+      "instructions": "Topic?",
+      "choices": [
+        {
+          "value": "praise",
+          "description": "praising"
+        },
+        {
+          "value": "complaint"
+        }
+      ]
+    },
+    {
+      "name": "stars",
+      "type": "score",
+      "instructions": "How satisfied?",
+      "levels": [
+        {
+          "label": "0",
+          "description": "not"
+        },
+        {
+          "label": "1",
+          "description": "somewhat"
+        },
+        {
+          "label": "2",
+          "description": "very"
+        }
+      ]
+    }
+  ]
+}

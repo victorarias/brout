@@ -16,6 +16,7 @@ import (
 
 	"github.com/victorarias/brout/internal/config"
 	"github.com/victorarias/brout/internal/provider"
+	"github.com/victorarias/brout/internal/provider/openai"
 	"github.com/victorarias/brout/internal/provider/systemone"
 	"github.com/victorarias/brout/internal/router"
 	"github.com/victorarias/brout/internal/server"
@@ -111,8 +112,15 @@ func buildProviders(cfg config.Config) (map[string]provider.Provider, error) {
 			spec = systemone.TypeSafe
 		case "subq":
 			spec = systemone.SubQ
+		case "openai":
+			baseURL := openai.DefaultBaseURL
+			if pc.BaseURL != "" {
+				baseURL = pc.BaseURL
+			}
+			providers[name] = openai.New(baseURL, pc.APIKey, client)
+			continue
 		default:
-			return nil, fmt.Errorf("config: [providers.%s] is not a provider brout knows; it knows typesafe and subq", name)
+			return nil, fmt.Errorf("config: [providers.%s] is not a provider brout knows; it knows typesafe, subq and openai", name)
 		}
 		if pc.BaseURL != "" {
 			spec.BaseURL = pc.BaseURL

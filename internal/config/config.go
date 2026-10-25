@@ -29,6 +29,12 @@ import (
 // jev takes at most about 32.8K input tokens, so the long state sits near
 // the largest request TypeSafe answers. 4 s is about 5 times the slowest run
 // and leaves 6 s of the SDK's 10 s for a second routing model.
+//
+// openai/gpt-6-luna through brout (C4, 2026-10-25, same script and runs):
+// short state (402 tokens) 0.16 to 0.33 s; long state (29,085 tokens) 0.16
+// to 0.43 s; 40 long states that were each unique, so OpenAI could not cache
+// them, 0.24 to 0.72 s. The slowest call seen was the session's first, direct
+// to OpenAI: 2.7 s for a short state. 4 s stays past it.
 const DefaultAttemptTimeout = 4 * time.Second
 
 const DefaultListen = "127.0.0.1:7979"
@@ -79,6 +85,9 @@ api_key_env = "TYPESAFE_API_KEY"       # or api_key = "..."; brout run by launch
 
 # [providers.subq]
 # api_key = "..."
+
+# [providers.openai]
+# api_key_env = "OPENAI_API_KEY"
 
 [log]
 enabled = true
