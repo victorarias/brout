@@ -163,3 +163,19 @@ func TestLogFailureDoesNotFailRequest(t *testing.T) {
 		t.Errorf("stderr %q, want a line starting %q", g.stderr.String(), want)
 	}
 }
+
+func TestLogAppendsPastTornTail(t *testing.T) {
+	dir := t.TempDir()
+	day := filepath.Join(dir, "2026-10-25.jsonl")
+	os.WriteFile(day, []byte(`{"v":1,"id":"20261025-120000-aaaaaa","request":{"sta`), 0o600)
+	g := newGateway(t, setup{typesafe: newFake(t, answers("jev-1.14.0")), routing: []string{"typesafe/jev-latest"}, logDir: dir})
+	id := g.post(t, request("")).header.Get("Brout-Request-Id")
+
+	var warn bytes.Buffer
+	if e, err := requestlog.Find(dir, id, &warn); err != nil || e.ID != id {
+		t.Errorf("Find(%s) = %v, %v", id, e.ID, err)
+	}
+	if want := day + ":1: skipped: not a log entry: unexpected end of JSON input\n"; warn.String() != want {
+		t.Errorf("warnings %q, want %q", warn.String(), want)
+	}
+}

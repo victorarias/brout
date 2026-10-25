@@ -85,15 +85,38 @@ func (w *Writer) Append(e Entry) error {
 	if err := os.MkdirAll(w.dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(line.Bytes())
+	out := line.Bytes()
+	if torn, err := endsTorn(f); err != nil {
+		f.Close()
+		return err
+	} else if torn {
+		// A crash or a failed write left a line without its newline. End it,
+		// so this entry gets a line of its own and readers skip only the
+		// fragment.
+		out = append([]byte("\n"), out...)
+	}
+	_, err = f.Write(out)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	return err
+}
+
+// endsTorn reports whether f is not empty and does not end in a newline.
+func endsTorn(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return false, err
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] != '\n', nil
 }
 
 func entryOf(ex server.Exchange) Entry {
