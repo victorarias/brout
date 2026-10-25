@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,9 +130,12 @@ func TestLogCrossesUTCMidnight(t *testing.T) {
 		if len(lines) != 1 || lines[0]["id"] != id {
 			t.Errorf("%s holds %v, want only %s", day, lines, id)
 		}
-		if e, err := requestlog.Find(dir, id); err != nil || e.ID != id {
+		if e, err := requestlog.Find(dir, id, io.Discard); err != nil || e.ID != id {
 			t.Errorf("Find(%s) = %v, %v", id, e.ID, err)
 		}
+	}
+	if latest, err := requestlog.Latest(dir, 1, io.Discard); err != nil || len(latest) != 1 || latest[0].ID != after {
+		t.Errorf("Latest(1) = %v, %v; want %s, the newest across day files", latest, err, after)
 	}
 	if !strings.HasPrefix(before, "20261025-235959-") || !strings.HasPrefix(after, "20261026-000000-") {
 		t.Errorf("ids %s and %s", before, after)

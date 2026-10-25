@@ -140,29 +140,35 @@ func fileOf(dir, id string) (string, error) {
 	return filepath.Join(dir, day.Format("2006-01-02")+".jsonl"), nil
 }
 
-// Find returns the entry with id.
-func Find(dir, id string) (Entry, error) {
+// Find returns the entry with id. It reads the id's file up to that entry, and
+// skips lines it cannot read with a note to warn.
+func Find(dir, id string, warn io.Writer) (Entry, error) {
 	path, err := fileOf(dir, id)
 	if err != nil {
 		return Entry{}, err
 	}
-	entries, err := readFile(path)
+	var found *Entry
+	err = scan(path, warn, func(e Entry) bool {
+		if e.ID == id {
+			found = &e
+		}
+		return found == nil
+	})
 	if errors.Is(err, fs.ErrNotExist) {
 		return Entry{}, fmt.Errorf("no request %s: %s does not exist", id, path)
 	}
 	if err != nil {
 		return Entry{}, err
 	}
-	for _, e := range entries {
-		if e.ID == id {
-			return e, nil
-		}
+	if found == nil {
+		return Entry{}, fmt.Errorf("no request %s in %s", id, path)
 	}
-	return Entry{}, fmt.Errorf("no request %s in %s", id, path)
+	return *found, nil
 }
 
-// Latest returns up to n entries, newest first.
-func Latest(dir string, n int) ([]Entry, error) {
+// Latest returns up to n entries, newest first. It holds at most n entries
+// while it reads, and skips lines it cannot read with a note to warn.
+func Latest(dir string, n int, warn io.Writer) ([]Entry, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl"))
 	if err != nil {
 		return nil, err
@@ -170,43 +176,68 @@ func Latest(dir string, n int) ([]Entry, error) {
 	slices.Sort(files)
 	var out []Entry
 	for i := len(files) - 1; i >= 0 && len(out) < n; i-- {
-		entries, err := readFile(files[i])
+		// The newest entries of a file are its last lines: keep the last
+		// want of them, oldest first.
+		want := n - len(out)
+		var last []Entry
+		err := scan(files[i], warn, func(e Entry) bool {
+			if len(last) == want {
+				last = slices.Delete(last, 0, 1)
+			}
+			last = append(last, e)
+			return true
+		})
 		if err != nil {
 			return nil, err
 		}
-		for j := len(entries) - 1; j >= 0 && len(out) < n; j-- {
-			out = append(out, entries[j])
-		}
+		slices.Reverse(last)
+		out = append(out, last...)
 	}
 	return out, nil
 }
 
-func readFile(path string) ([]Entry, error) {
+// scan calls fn with each entry in the file at path, in order, until fn
+// returns false. A torn line, such as a crash leaves, or an entry of a
+// version this brout does not read is skipped with a note to warn, so one bad
+// line does not hide the rest of the day.
+func scan(path string, warn io.Writer, fn func(Entry) bool) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
-	var entries []Entry
-	r := bufio.NewReader(f)
+	r := bufio.NewReader(f) // ReadBytes has no line limit; a line holds a body of up to 64 MiB
 	for n := 1; ; n++ {
 		line, err := r.ReadBytes('\n')
-		if len(bytes.TrimSpace(line)) > 0 {
-			var e Entry
-			if jerr := json.Unmarshal(line, &e); jerr != nil {
-				return nil, fmt.Errorf("%s:%d: %v", path, n, jerr)
+		if line = bytes.TrimSpace(line); len(line) > 0 {
+			if e, why := decode(line); why != "" {
+				fmt.Fprintf(warn, "%s:%d: skipped: %s\n", path, n, why)
+			} else if !fn(e) {
+				return nil
 			}
-			if e.V != Version {
-				return nil, fmt.Errorf("%s:%d: entry version %d; this brout reads version %d", path, n, e.V, Version)
-			}
-			e.Raw = bytes.TrimSpace(line)
-			entries = append(entries, e)
 		}
 		if err == io.EOF {
-			return entries, nil
+			return nil
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
+}
+
+// decode reads one line, checking its version before the rest. why says why
+// it could not.
+func decode(line []byte) (e Entry, why string) {
+	var v struct{ V int }
+	if err := json.Unmarshal(line, &v); err != nil {
+		return Entry{}, fmt.Sprintf("not a log entry: %v", err)
+	}
+	if v.V != Version {
+		return Entry{}, fmt.Sprintf("entry version %d; this brout reads version %d", v.V, Version)
+	}
+	if err := json.Unmarshal(line, &e); err != nil {
+		return Entry{}, fmt.Sprintf("not a version %d entry: %v", Version, err)
+	}
+	e.Raw = line
+	return e, ""
 }

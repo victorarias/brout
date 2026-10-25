@@ -33,7 +33,7 @@ func logs(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	entries, err := requestlog.Latest(cfg.Log.Dir, *limit)
+	entries, err := requestlog.Latest(cfg.Log.Dir, *limit, stderr)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func logsShow(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	e, err := requestlog.Find(cfg.Log.Dir, ids[0])
+	e, err := requestlog.Find(cfg.Log.Dir, ids[0], stderr)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func replay(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if *url == "" {
 		*url = "http://" + cfg.Listen
 	}
-	e, err := requestlog.Find(cfg.Log.Dir, ids[0])
+	e, err := requestlog.Find(cfg.Log.Dir, ids[0], stderr)
 	if err != nil {
 		return err
 	}
@@ -155,6 +155,10 @@ func replay(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 
 // replayBody is the logged request, with its model replaced when model is set.
 func replayBody(e requestlog.Entry, model string) ([]byte, error) {
+	if string(e.Request) == "null" {
+		// brout could not read the body, so there is nothing to send.
+		return nil, fmt.Errorf("request %s has no logged body to replay", e.ID)
+	}
 	var text string
 	if json.Unmarshal(e.Request, &text) == nil {
 		// brout logs a body that is not JSON as a string.
@@ -224,7 +228,10 @@ func (o outcome) cell(name string) string {
 		return "-"
 	case a.Type == "noul" && a.Noul != nil:
 		return fmt.Sprintf("noul %.3f", *a.Noul)
-	case a.Type == "choice" && a.Choice != nil && a.Confidence != nil:
+	case a.Type == "choice" && a.Choice != nil:
+		if a.Confidence == nil {
+			return "choice " + *a.Choice
+		}
 		return fmt.Sprintf("choice %s (confidence %.3f)", *a.Choice, *a.Confidence)
 	case a.Type == "score" && a.Score != nil:
 		return fmt.Sprintf("score %.3f", *a.Score)
