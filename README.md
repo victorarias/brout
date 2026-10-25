@@ -35,7 +35,38 @@ After the first release, you can download an archive from
 contain `brout`, this README, the reference, and the MIT license. Pick
 `darwin_arm64` for Apple Silicon, `darwin_amd64` for Intel Macs, or `linux_arm64`
 or `linux_amd64` for Linux.
-Extract the binary into a directory on your PATH. Releases include `checksums.txt`.
+To download a release with curl, set `BROUT_VERSION` to a published version
+without its leading `v`, and choose the platform above:
+
+```sh
+BROUT_VERSION=0.1.0
+BROUT_PLATFORM=darwin_arm64
+BROUT_ARCHIVE="brout_${BROUT_VERSION}_${BROUT_PLATFORM}.tar.gz"
+curl -fL -o "$BROUT_ARCHIVE" \
+  "https://github.com/victorarias/brout/releases/download/v${BROUT_VERSION}/${BROUT_ARCHIVE}"
+curl -fL -o checksums.txt \
+  "https://github.com/victorarias/brout/releases/download/v${BROUT_VERSION}/checksums.txt"
+shasum -a 256 --ignore-missing -c checksums.txt
+tar -xzf "$BROUT_ARCHIVE"
+mkdir -p "$HOME/.local/bin"
+mv brout "$HOME/.local/bin/brout"
+export PATH="$HOME/.local/bin:$PATH"
+brout version
+```
+
+macOS binaries are not Developer ID signed or notarized. Downloading with curl
+avoids the browser's quarantine attribute. If you use a browser and macOS blocks
+the binary, verify the archive checksum, then remove quarantine from the
+installed binary:
+
+```sh
+xattr -d com.apple.quarantine "$HOME/.local/bin/brout"
+brout version
+```
+
+Run `brout version` successfully before installing the LaunchAgent. Gatekeeper
+can block a quarantined binary under launchd without writing a startup log.
+See [Apple's Gatekeeper guidance](https://support.apple.com/en-us/102445).
 
 ## Get an answer
 
@@ -149,7 +180,14 @@ a bare `jev-latest` is an error.
 Each attempt can take `attempt_timeout`, so timeouts add up across the routing
 list. The default is 4 seconds per model. TypeSafe SDKs default to a 10-second
 attempt timeout. Keep the routing list short or lower `attempt_timeout` so that
-the SDK can wait for the entire sequence. List the routing models with:
+the SDK can wait for the entire sequence. Both SDKs default to two retries on
+408, 429, 5xx, connection failures, and their own timeouts. An all-unavailable
+auto request can therefore run the entire routing list three times, producing
+separate log entries. A caller timeout appears as status 499 before a retry.
+Configure the SDK's retry policy to change this behavior
+([JavaScript](https://docs.typesafe.ai/sdk/javascript/api/interfaces/RetryPolicy),
+[Python](https://docs.typesafe.ai/sdk/python/api/retries)).
+List the routing models with:
 
 ```sh
 curl --fail-with-body http://127.0.0.1:7979/v1/models
@@ -220,9 +258,12 @@ brout service install
 brout service status
 ```
 
-Install prints the plist path and configured address. Status prints `loaded`
-and the configured address, or `not loaded`. Registration does not prove that
-the HTTP listener started. Send the curl request above to check it.
+Install prints the plist path and configured address. Status prints whether the
+agent is loaded, its launchd state, PID, last exit code, and configured address.
+Unavailable diagnostics are shown as `unknown`. A nonzero last exit code points
+to the stderr log. Status also reports a missing or non-executable installed
+binary. Registration does not prove that the HTTP listener started. Send the
+curl request above to check it.
 
 The plist is `~/Library/LaunchAgents/io.github.victorarias.brout.plist`.
 It starts the installed binary with `serve --config` and an absolute config
@@ -253,7 +294,8 @@ Linux users can run `brout serve` under their own process manager.
 
 ## Inspect and replay requests
 
-brout writes full requests and responses to one JSONL file per UTC day under
+brout logs `POST /v1/systemone` requests, including failures, with full requests
+and responses in one JSONL file per UTC day under
 `~/.local/state/brout/logs/YYYY-MM-DD.jsonl`. The default uses
 `$XDG_STATE_HOME/brout/logs` when set. Set `[log] dir` to change it, or
 `enabled = false` to disable request logging.
@@ -264,7 +306,9 @@ brout logs show REQUEST_ID
 brout replay REQUEST_ID --model openai/gpt-6-luna
 ```
 
-Replace `REQUEST_ID` with an ID from `brout logs` or the response header.
+Replace `REQUEST_ID` with an ID from `brout logs` or a `POST /v1/systemone`
+response header. Other HTTP paths also carry `Brout-Request-Id`, but are not
+written to the request log.
 `logs show` prints the full entry. Replay sends the original request through
 the running gateway and compares each old and new answer. Omit `--model` to
 keep the original request's model selection. The replay is logged with
@@ -280,7 +324,8 @@ See the [version 1 log entry format](docs/reference.md#request-log-entry).
 
 ## Handle errors
 
-Errors have this shape, with a `Brout-Request-Id` response header:
+Errors have this shape, with a `Brout-Request-Id` response header. IDs from
+`POST /v1/systemone` can be inspected with `brout logs show`:
 
 ```json
 {"detail":{"error_type":"unknown_model","message":"model ... is not a model id; ..."}}

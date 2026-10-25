@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/victorarias/brout/internal/config"
 	"github.com/victorarias/brout/internal/service"
@@ -58,24 +59,66 @@ func serviceCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		fmt.Fprintf(stdout, "uninstalled %s\n", a.Path)
 	case "status":
-		loaded, err := a.Loaded(ctx)
-		if err != nil {
-			return err
-		}
-		if !loaded {
-			fmt.Fprintln(stdout, "not loaded")
-			return nil
-		}
-		fmt.Fprintln(stdout, "loaded "+service.Label)
-		path, err := a.ConfigPath()
-		if err != nil {
-			return err
-		}
-		cfg, err := config.LoadClient(path)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "configured address: http://%s\nconfig: %s\n", cfg.Listen, path)
+		return serviceStatus(ctx, a, stdout)
 	}
 	return nil
+}
+
+func serviceStatus(ctx context.Context, a service.Agent, stdout io.Writer) error {
+	s, err := a.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if !s.Loaded {
+		fmt.Fprintln(stdout, "not loaded")
+		return nil
+	}
+	if s.State == "" {
+		fmt.Fprintln(stdout, "loaded (state unknown)")
+	} else {
+		fmt.Fprintf(stdout, "loaded %s\nstate: %s\n", service.Label, s.State)
+	}
+	pid := "unknown"
+	if s.PID > 0 {
+		pid = strconv.Itoa(s.PID)
+	}
+	lastExit := s.LastExit
+	if lastExit == "" {
+		lastExit = "unknown"
+	}
+	fmt.Fprintf(stdout, "pid: %s\nlast exit code: %s\n", pid, lastExit)
+	def, err := a.Read()
+	if err != nil {
+		return err
+	}
+	if def.Stderr != "" {
+		fmt.Fprintf(stdout, "stderr: %s\n", def.Stderr)
+		if code, err := strconv.Atoi(s.LastExit); err == nil && code != 0 {
+			fmt.Fprintf(stdout, "last exit was nonzero; see %s\n", def.Stderr)
+		}
+	}
+	var problems []error
+	if len(def.Args) == 0 {
+		problems = append(problems, errors.New("installed plist has no executable in ProgramArguments"))
+	} else {
+		binary := def.Args[0]
+		fmt.Fprintf(stdout, "binary: %s\n", binary)
+		if info, err := os.Stat(binary); err != nil {
+			problems = append(problems, fmt.Errorf("installed binary %s: %w", binary, err))
+		} else if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			problems = append(problems, fmt.Errorf("installed binary %s is not executable", binary))
+		}
+	}
+	path, err := def.ConfigPath()
+	if err != nil {
+		problems = append(problems, err)
+	} else {
+		fmt.Fprintf(stdout, "config: %s\n", path)
+		if cfg, err := config.LoadClient(path); err != nil {
+			problems = append(problems, err)
+		} else {
+			fmt.Fprintf(stdout, "configured address: http://%s\n", cfg.Listen)
+		}
+	}
+	return errors.Join(problems...)
 }

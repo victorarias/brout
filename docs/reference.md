@@ -63,7 +63,9 @@ One. An OpenAI refusal is a 422 `rejected` error naming the question.
 
 Question objects have `type`, optional `instructions`, and `criteria`.
 `instructions` can be text or JSON. A `noul` takes optional criteria keyed by
-`"true"` and `"false"`. A `choice` takes an object of option names to descriptions
+`"true"` and `"false"`. TypeSafe requires a `noul` to have at least one of
+`instructions` or `criteria`. Omitting both produces a 400 provider rejection
+without failover. A `choice` takes an object of option names to descriptions
 (including null). A `score` takes an ordered array of level descriptions.
 Top-level `assets`, `images`, and `box` questions are unsupported.
 
@@ -111,8 +113,10 @@ prints a line to stderr for each failover. brout never retries an attempt.
 
 ## Request log entry
 
-The request log contains one JSON object per line in `YYYY-MM-DD.jsonl`, with
-the day in UTC. This is an illustrative version 1 entry, formatted for reading:
+Only `POST /v1/systemone` is logged, including failed requests. Other HTTP paths
+have request IDs but no log entries. The request log contains one JSON object
+per line in `YYYY-MM-DD.jsonl`, with the day in UTC. This is an illustrative
+version 1 entry, formatted for reading:
 
 ```json
 {

@@ -21,6 +21,16 @@ func writeConfig(t *testing.T, content string) string {
 	return path
 }
 
+func TestVersion(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"version"}, &out, io.Discard, nil); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "brout dev\n" {
+		t.Fatalf("version: %q", &out)
+	}
+}
+
 func TestServeRefusesUnresolvedKey(t *testing.T) {
 	path := writeConfig(t, `
 routing = ["typesafe/jev-latest"]
