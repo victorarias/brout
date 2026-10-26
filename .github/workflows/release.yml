@@ -3,13 +3,17 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Rehearses a signed and notarized build without publishing anything.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # codesign and notarytool exist only on macOS; the Linux builds
+    # cross-compile there too.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,9 +23,65 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+
+      - name: Import Apple signing credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -z "${!var:-}" ]; then
+              echo "Missing required secret: $var"
+              exit 1
+            fi
+          done
+
+          CERT_PATH="$RUNNER_TEMP/apple-certificate.p12"
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          KEYCHAIN_PATH="$RUNNER_TEMP/brout-signing.keychain-db"
+
+          printf '%s' "$APPLE_CERTIFICATE" | tr -d '\n\r' | openssl base64 -d -A -out "$CERT_PATH"
+          printf '%s' "$APPLE_API_KEY_P8" | tr -d '\n\r' | openssl base64 -d -A -out "$KEY_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -f pkcs12 -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -nE 's/.*"([^"]+)".*/\1/p' | grep 'Developer ID Application:' | head -n1)"
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "Developer ID Application identity not found in imported keychain"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+            exit 1
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "NOTARY_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "APPLE_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: v2.19.0
-          args: release --clean
+          args: ${{ github.event_name == 'workflow_dispatch' && 'release --snapshot --clean' || 'release --clean' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BROUT_REQUIRE_SIGNING: '1'
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+
+      - name: Clean up Apple signing credentials
+        if: always()
+        run: |
+          if [ -n "${APPLE_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
+          fi
+          rm -f "$RUNNER_TEMP/apple-certificate.p12"
+          if [ -n "${NOTARY_API_KEY_PATH:-}" ]; then
+            rm -f "$NOTARY_API_KEY_PATH"
+          fi

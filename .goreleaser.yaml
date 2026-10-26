@@ -10,6 +10,10 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: ['-s -w -X main.version={{ .Version }}']
+    hooks:
+      post:
+        - cmd: ./scripts/sign-darwin.sh "{{ .Path }}" "{{ .Os }}"
+          output: true
 
 archives:
   - formats: [tar.gz]
