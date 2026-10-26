@@ -54,19 +54,18 @@ export PATH="$HOME/.local/bin:$PATH"
 brout version
 ```
 
-macOS binaries are not Developer ID signed or notarized. Downloading with curl
-avoids the browser's quarantine attribute. If you use a browser and macOS blocks
-the binary, verify the archive checksum, then remove quarantine from the
-installed binary:
+The macOS binaries are signed with a Developer ID and notarized by Apple, so
+Gatekeeper lets them run whether you download them with curl or a browser. A
+bare binary can't carry its notarization ticket, so the first run checks it
+online. To check a binary yourself:
 
 ```sh
-xattr -d com.apple.quarantine "$HOME/.local/bin/brout"
-brout version
+codesign --verify --strict --verbose=2 "$HOME/.local/bin/brout"
+codesign -dv "$HOME/.local/bin/brout" 2>&1 | grep -E 'Authority=Developer ID|TeamIdentifier'
 ```
 
-Run `brout version` successfully before installing the LaunchAgent. Gatekeeper
-can block a quarantined binary under launchd without writing a startup log.
-See [Apple's Gatekeeper guidance](https://support.apple.com/en-us/102445).
+Run `brout version` once before installing the LaunchAgent, so the first-run
+check happens in your shell and not under launchd.
 
 ## Get an answer
 
@@ -345,10 +344,19 @@ goreleaser release --snapshot --clean
 ```
 
 The [GoReleaser config](https://github.com/victorarias/brout/blob/main/.goreleaser.yaml) builds macOS and Linux binaries for
-amd64 and arm64. A snapshot stays in `dist/` and publishes nothing.
+amd64 and arm64. A snapshot stays in `dist/` and publishes nothing. A local
+snapshot leaves the macOS binaries unsigned, because
+[scripts/sign-darwin.sh](https://github.com/victorarias/brout/blob/main/scripts/sign-darwin.sh) skips signing without
+Apple credentials in the environment.
 [CI](https://github.com/victorarias/brout/blob/main/.github/workflows/ci.yml) runs vet and tests on macOS and Linux for pull
 requests. The [release workflow](https://github.com/victorarias/brout/blob/main/.github/workflows/release.yml) publishes when
-a `v*` tag is pushed.
+a `v*` tag is pushed. It runs on macOS, signs and notarizes the darwin binaries,
+and fails rather than publish them unsigned. Running it by hand (workflow
+dispatch) rehearses a signed snapshot without publishing. It needs these
+repository secrets: `APPLE_CERTIFICATE` (a base64 Developer ID Application
+`.p12`), `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_API_ISSUER`,
+`APPLE_API_KEY` (the App Store Connect key id) and `APPLE_API_KEY_P8` (the
+base64 `.p8`).
 
 On macOS, rerun the live install check with a TypeSafe key in the environment:
 
