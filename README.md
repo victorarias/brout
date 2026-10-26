@@ -354,7 +354,7 @@ a `v*` tag is pushed. It runs on macOS, signs and notarizes the darwin binaries,
 and fails rather than publish them unsigned. Running it by hand (workflow
 dispatch) rehearses a signed snapshot without publishing. It needs these
 repository secrets: `APPLE_CERTIFICATE` (a base64 Developer ID Application
-`.p12`), `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `APPLE_API_ISSUER`,
+`.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_ISSUER`,
 `APPLE_API_KEY` (the App Store Connect key id) and `APPLE_API_KEY_P8` (the
 base64 `.p8`).
 
