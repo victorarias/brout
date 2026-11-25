@@ -157,18 +157,25 @@ api_key = "must-not-appear-in-plist"
 }
 
 func TestServiceInstallRejectsShellKeys(t *testing.T) {
-	serviceHome(t)
-	t.Setenv("BROUT_TEST_KEY", "available-in-this-shell")
-	path := writeConfig(t, `[providers.typesafe]
-api_key_env = "BROUT_TEST_KEY"
-`)
-	err := run(context.Background(), []string{"service", "install", "--config", path}, io.Discard, io.Discard, nil)
-	if err == nil || !strings.Contains(err.Error(), "providers.typesafe.api_key_env names BROUT_TEST_KEY") ||
-		!strings.Contains(err.Error(), "launchd does not inherit your shell environment") || !strings.Contains(err.Error(), "api_key") {
-		t.Fatalf("install: %v", err)
+	cases := map[string]struct{ config, want string }{
+		"api_key_env": {"[providers.typesafe]\napi_key_env = \"BROUT_TEST_KEY\"\n",
+			"providers.typesafe.api_key_env names BROUT_TEST_KEY; launchd does not inherit your shell environment; put the key in the config as api_key"},
+		"headers_env": {"[providers.gateway]\nprotocol = \"openai\"\nheaders_env = { x-api-key = \"BROUT_TEST_KEY\" }\n",
+			`providers.gateway.headers_env."x-api-key" names BROUT_TEST_KEY; launchd does not inherit your shell environment; put the value in the config under headers`},
 	}
-	if _, err := os.Stat(filepath.Join(os.Getenv("BROUT_TEST_LAUNCHCTL"), "calls")); !os.IsNotExist(err) {
-		t.Fatalf("invalid config reached launchctl: %v", err)
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			serviceHome(t)
+			t.Setenv("BROUT_TEST_KEY", "available-in-this-shell")
+			path := writeConfig(t, c.config)
+			err := run(context.Background(), []string{"service", "install", "--config", path}, io.Discard, io.Discard, nil)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("install: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(os.Getenv("BROUT_TEST_LAUNCHCTL"), "calls")); !os.IsNotExist(err) {
+				t.Fatalf("invalid config reached launchctl: %v", err)
+			}
+		})
 	}
 }
 

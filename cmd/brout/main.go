@@ -90,10 +90,7 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer, ready f
 	if err != nil {
 		return err
 	}
-	providers, err := buildProviders(cfg)
-	if err != nil {
-		return err
-	}
+	providers := buildProviders(cfg)
 
 	opts := server.Options{
 		Router: router.New(providers, cfg.Routing, cfg.AttemptTimeout, router.RealClock{}),
@@ -132,31 +129,30 @@ func serve(ctx context.Context, args []string, stdout, stderr io.Writer, ready f
 }
 
 // buildProviders makes an adapter for each configured provider.
-func buildProviders(cfg config.Config) (map[string]provider.Provider, error) {
+func buildProviders(cfg config.Config) map[string]provider.Provider {
 	client := &http.Client{}
 	providers := map[string]provider.Provider{}
-	for _, name := range cfg.ProviderNames() {
-		pc := cfg.Providers[name]
-		var spec systemone.Spec
-		switch name {
-		case "typesafe":
-			spec = systemone.TypeSafe
-		case "subq":
-			spec = systemone.SubQ
-		case "openai":
+	for name, pc := range cfg.Providers {
+		switch pc.Protocol {
+		case config.OpenAI:
 			baseURL := openai.DefaultBaseURL
 			if pc.BaseURL != "" {
 				baseURL = pc.BaseURL
 			}
-			providers[name] = openai.New(baseURL, pc.APIKey, client)
-			continue
-		default:
-			return nil, fmt.Errorf("config: [providers.%s] is not a provider brout knows; it knows typesafe, subq and openai", name)
+			providers[name] = openai.New(name, baseURL, pc.Headers, client)
+		case config.SystemOne:
+			var spec systemone.Spec // a custom provider: config requires its base_url
+			switch name {
+			case "typesafe":
+				spec = systemone.TypeSafe
+			case "subq":
+				spec = systemone.SubQ
+			}
+			if pc.BaseURL != "" {
+				spec.BaseURL = pc.BaseURL
+			}
+			providers[name] = systemone.New(name, spec, pc.Headers, client)
 		}
-		if pc.BaseURL != "" {
-			spec.BaseURL = pc.BaseURL
-		}
-		providers[name] = systemone.New(name, spec, pc.APIKey, client)
 	}
-	return providers, nil
+	return providers
 }

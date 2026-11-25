@@ -108,11 +108,11 @@ func replies(status int, body []byte) http.HandlerFunc {
 // gateway is brout's HTTP handler with openai, and typesafe when given.
 func gateway(t *testing.T, oa, typesafe *fake, routing ...string) string {
 	t.Helper()
-	providers := map[string]provider.Provider{"openai": openai.New(oa.URL, "key-openai", http.DefaultClient)}
+	providers := map[string]provider.Provider{"openai": openai.New("openai", oa.URL, bearer("key-openai"), http.DefaultClient)}
 	if typesafe != nil {
 		spec := systemone.TypeSafe
 		spec.BaseURL = typesafe.URL
-		providers["typesafe"] = systemone.New("typesafe", spec, "key-typesafe", http.DefaultClient)
+		providers["typesafe"] = systemone.New("typesafe", spec, bearer("key-typesafe"), http.DefaultClient)
 	}
 	hs := httptest.NewServer(server.New(server.Options{
 		Router: router.New(providers, routing, 4*time.Second, router.RealClock{}),
@@ -367,3 +367,5 @@ func TestLimits(t *testing.T) {
 		t.Errorf("a request over the limits reached openai")
 	}
 }
+
+func bearer(key string) http.Header { return http.Header{"Authorization": {"Bearer " + key}} }

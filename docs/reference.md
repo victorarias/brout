@@ -12,15 +12,31 @@ The default config path is `$XDG_CONFIG_HOME/brout/config.toml`, or
 | `listen` | `127.0.0.1:7979` | HTTP listen address |
 | `routing` | Empty | Ordered provider-prefixed model IDs for auto requests |
 | `attempt_timeout` | `4s` | Positive Go duration for each provider attempt |
-| `providers.<name>.api_key` | Unset | Provider key in the config |
+| `providers.<name>.protocol` | The built-in provider's | `openai` (POST `/v1/decisions`) or `systemone` (POST `/v1/systemone`); required for a custom name |
+| `providers.<name>.api_key` | Unset | Provider key in the config, sent as `Authorization: Bearer <key>` |
 | `providers.<name>.api_key_env` | Unset | Environment variable holding the provider key, for foreground use |
-| `providers.<name>.base_url` | Provider's URL | API root, without `/v1/systemone` or `/v1/decisions` |
+| `providers.<name>.base_url` | Provider's URL | API root, without `/v1/systemone` or `/v1/decisions`; required for a custom `systemone` provider |
+| `providers.<name>.headers` | Empty | Header name to value, sent on every request to the provider |
+| `providers.<name>.headers_env` | Empty | Header name to environment variable holding its value, for foreground use |
 | `log.enabled` | `true` | Request logging |
 | `log.dir` | `$XDG_STATE_HOME/brout/logs`, or `~/.local/state/brout/logs` | JSONL directory; `~/` expands to HOME |
 
-Provider names are `typesafe`, `openai`, and `subq`. Each configured provider
-needs exactly one key setting. Every routing entry must name a configured
-provider. Unknown config fields are errors. `serve` loads config once at startup.
+The built-in provider names are `typesafe` and `subq`, which speak
+`systemone`, and `openai`, which speaks `openai`. They need no `protocol`; if
+one is set, it must match. Any other section name is a custom provider and must
+set `protocol`. A custom `openai` provider defaults to `https://api.openai.com`.
+A custom `systemone` provider has no default `base_url` and no known limits. The
+provider name prefixes the provider's model IDs, such as `gateway/gpt-6-luna`,
+in routing, requests, responses, errors, and the request log.
+
+Each configured provider needs at least one of `api_key`, `api_key_env`,
+`headers`, or `headers_env`, and at most one of `api_key` and `api_key_env`.
+Header names are case-insensitive. A header may be set once across
+`headers`, `headers_env`, and the API key, which sets `Authorization`. brout
+sets `Content-Type` itself, so neither header map may set it. A provider with
+only headers sends no `Authorization` header. Every routing entry must name a
+configured provider. Unknown config fields are errors. `serve` loads config
+once at startup.
 
 ## Provider limits
 

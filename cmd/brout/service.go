@@ -42,9 +42,6 @@ func serviceCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			return err
 		}
-		if _, err := buildProviders(cfg); err != nil {
-			return err
-		}
 		state := os.Getenv("XDG_STATE_HOME")
 		if state == "" {
 			state = filepath.Join(a.Home, ".local", "state")

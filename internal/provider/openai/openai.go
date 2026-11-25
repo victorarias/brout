@@ -30,13 +30,14 @@ var Limits = provider.Limits{
 
 // Adapter calls OpenAI's decisions API.
 type Adapter struct {
+	name    string // provider name, such as "openai"; prefixes model ids in messages
 	baseURL string
-	apiKey  string
+	headers http.Header // sent on every request, such as Authorization
 	client  *http.Client
 }
 
-func New(baseURL, apiKey string, client *http.Client) *Adapter {
-	return &Adapter{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, client: client}
+func New(name, baseURL string, headers http.Header, client *http.Client) *Adapter {
+	return &Adapter{name: name, baseURL: strings.TrimRight(baseURL, "/"), headers: headers, client: client}
 }
 
 func (a *Adapter) Limits() provider.Limits { return Limits }
@@ -46,7 +47,7 @@ func (a *Adapter) Limits() provider.Limits { return Limits }
 const errorBodyLimit = 1 << 20
 
 func (a *Adapter) Decide(ctx context.Context, model string, req decision.Request) (decision.Response, error) {
-	modelID := "openai/" + model
+	modelID := a.name + "/" + model
 	body, err := decision.Encode(translate(model, req))
 	if err != nil {
 		return decision.Response{}, err
@@ -55,8 +56,8 @@ func (a *Adapter) Decide(ctx context.Context, model string, req decision.Request
 	if err != nil {
 		return decision.Response{}, err
 	}
+	hreq.Header = a.headers.Clone()
 	hreq.Header.Set("Content-Type", "application/json")
-	hreq.Header.Set("Authorization", "Bearer "+a.apiKey)
 
 	resp, err := a.client.Do(hreq)
 	if err != nil {

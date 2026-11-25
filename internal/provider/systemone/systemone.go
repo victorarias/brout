@@ -17,6 +17,7 @@ import (
 )
 
 // Known providers that speak System One, with their documented limits (F3).
+// A custom systemone provider has no default base URL and unknown limits.
 var (
 	TypeSafe = Spec{
 		BaseURL: "https://api.typesafe.ai",
@@ -41,15 +42,15 @@ type Spec struct {
 
 // Adapter calls one System One provider.
 type Adapter struct {
-	name   string // provider name, such as "typesafe"; prefixes model ids in messages
-	spec   Spec
-	apiKey string
-	client *http.Client
+	name    string // provider name, such as "typesafe"; prefixes model ids in messages
+	spec    Spec
+	headers http.Header // sent on every request, such as Authorization
+	client  *http.Client
 }
 
-func New(name string, spec Spec, apiKey string, client *http.Client) *Adapter {
+func New(name string, spec Spec, headers http.Header, client *http.Client) *Adapter {
 	spec.BaseURL = strings.TrimRight(spec.BaseURL, "/")
-	return &Adapter{name: name, spec: spec, apiKey: apiKey, client: client}
+	return &Adapter{name: name, spec: spec, headers: headers, client: client}
 }
 
 func (a *Adapter) Limits() provider.Limits { return a.spec.Limits }
@@ -72,8 +73,8 @@ func (a *Adapter) Decide(ctx context.Context, model string, req decision.Request
 	if err != nil {
 		return decision.Response{}, err
 	}
+	hreq.Header = a.headers.Clone()
 	hreq.Header.Set("Content-Type", "application/json")
-	hreq.Header.Set("Authorization", "Bearer "+a.apiKey)
 
 	resp, err := a.client.Do(hreq)
 	if err != nil {

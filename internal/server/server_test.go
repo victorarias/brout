@@ -230,12 +230,12 @@ func newGateway(t *testing.T, s setup) *gateway {
 	if s.typesafe != nil {
 		spec := systemone.TypeSafe
 		spec.BaseURL = s.typesafe.URL
-		providers["typesafe"] = systemone.New("typesafe", spec, "key-typesafe", http.DefaultClient)
+		providers["typesafe"] = systemone.New("typesafe", spec, bearer("key-typesafe"), http.DefaultClient)
 	}
 	if s.subq != nil {
 		spec := systemone.SubQ
 		spec.BaseURL = s.subq.URL
-		providers["subq"] = systemone.New("subq", spec, "key-subq", http.DefaultClient)
+		providers["subq"] = systemone.New("subq", spec, bearer("key-subq"), http.DefaultClient)
 	}
 	if s.clock == nil {
 		s.clock = &fakeClock{}
@@ -751,3 +751,5 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+func bearer(key string) http.Header { return http.Header{"Authorization": {"Bearer " + key}} }
