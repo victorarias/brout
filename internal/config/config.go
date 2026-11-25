@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,11 +49,24 @@ type Config struct {
 	Log            Log
 }
 
-// Provider is one configured provider, with its key resolved.
+// Provider is one configured provider, with its key and headers resolved.
 type Provider struct {
-	APIKey  string
-	BaseURL string // "" for the provider's default
+	Protocol Protocol
+	BaseURL  string      // "" for the provider's default; set for a custom systemone provider
+	Headers  http.Header // sent on every request: Authorization from the API key, then headers and headers_env
 }
+
+// Protocol is the wire a provider speaks.
+type Protocol string
+
+const (
+	OpenAI    Protocol = "openai"    // OpenAI's POST /v1/decisions
+	SystemOne Protocol = "systemone" // POST /v1/systemone
+)
+
+// builtin maps the providers brout knows by name to their protocol. Any
+// other section names its protocol.
+var builtin = map[string]Protocol{"typesafe": SystemOne, "subq": SystemOne, "openai": OpenAI}
 
 type Log struct {
 	Enabled bool
@@ -64,9 +78,12 @@ type file struct {
 	Routing        []string
 	AttemptTimeout *string `toml:"attempt_timeout"`
 	Providers      map[string]struct {
-		APIKey    string `toml:"api_key"`
-		APIKeyEnv string `toml:"api_key_env"`
-		BaseURL   string `toml:"base_url"`
+		Protocol   string
+		APIKey     string            `toml:"api_key"`
+		APIKeyEnv  string            `toml:"api_key_env"`
+		BaseURL    string            `toml:"base_url"`
+		Headers    map[string]string // header name to value
+		HeadersEnv map[string]string `toml:"headers_env"` // header name to environment variable
 	}
 	Log struct {
 		Enabled *bool
@@ -165,8 +182,33 @@ func load(path string, resolveKeys, service bool) (Config, error) {
 		return cfg, nil
 	}
 
-	for name, p := range f.Providers {
+	names := make([]string, 0, len(f.Providers))
+	for name := range f.Providers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		p := f.Providers[name]
 		field := "providers." + name
+		pc := Provider{BaseURL: p.BaseURL, Headers: http.Header{}}
+
+		known, isBuiltin := builtin[name]
+		switch {
+		case p.Protocol == "" && isBuiltin:
+			pc.Protocol = known
+		case p.Protocol == "":
+			return Config{}, fmt.Errorf("%s: [%s] is not a provider brout knows (typesafe, subq, openai); set protocol = \"openai\" or \"systemone\"", path, field)
+		case Protocol(p.Protocol) != OpenAI && Protocol(p.Protocol) != SystemOne:
+			return Config{}, fmt.Errorf("%s: %s.protocol %q is not \"openai\" or \"systemone\"", path, field, p.Protocol)
+		case isBuiltin && Protocol(p.Protocol) != known:
+			return Config{}, fmt.Errorf("%s: %s.protocol %q does not match the built-in %s provider, which speaks %q; drop protocol or rename the section", path, field, p.Protocol, name, known)
+		default:
+			pc.Protocol = Protocol(p.Protocol)
+		}
+		if !isBuiltin && pc.Protocol == SystemOne && p.BaseURL == "" {
+			return Config{}, fmt.Errorf("%s: %s needs base_url; a custom systemone provider has no default", path, field)
+		}
+
 		key := p.APIKey
 		switch {
 		case p.APIKey != "" && p.APIKeyEnv != "":
@@ -179,10 +221,52 @@ func load(path string, resolveKeys, service bool) (Config, error) {
 			if key == "" {
 				return Config{}, fmt.Errorf("%s: %s.api_key_env names %s, which is not set in brout's environment (launchd does not pass on your shell's); put the key in the config as api_key", path, field, p.APIKeyEnv)
 			}
-		case key == "":
-			return Config{}, fmt.Errorf("%s: %s needs api_key or api_key_env", path, field)
+		case key == "" && len(p.Headers) == 0 && len(p.HeadersEnv) == 0:
+			return Config{}, fmt.Errorf("%s: %s needs api_key, api_key_env, headers or headers_env", path, field)
 		}
-		cfg.Providers[name] = Provider{APIKey: key, BaseURL: p.BaseURL}
+
+		// set records where each header came from, by canonical name, so a
+		// header set twice in any case is an error that names both places.
+		from := map[string]string{"Content-Type": "brout"}
+		set := func(header, value, source string) error {
+			canon := http.CanonicalHeaderKey(header)
+			if prev, ok := from[canon]; ok {
+				if prev == "brout" {
+					return fmt.Errorf("%s: %s sets %s, which brout sets itself", path, source, canon)
+				}
+				return fmt.Errorf("%s: %s and %s both set the %s header; keep one", path, prev, source, canon)
+			}
+			from[canon] = source
+			pc.Headers.Set(canon, value)
+			return nil
+		}
+		if key != "" {
+			source := field + ".api_key"
+			if p.APIKeyEnv != "" {
+				source += "_env"
+			}
+			set("Authorization", "Bearer "+key, source)
+		}
+		for _, h := range sortedKeys(p.Headers) {
+			if err := set(h, p.Headers[h], fmt.Sprintf("%s.headers.%q", field, h)); err != nil {
+				return Config{}, err
+			}
+		}
+		for _, h := range sortedKeys(p.HeadersEnv) {
+			env := p.HeadersEnv[h]
+			source := fmt.Sprintf("%s.headers_env.%q", field, h)
+			if service {
+				return Config{}, fmt.Errorf("%s: %s names %s; launchd does not inherit your shell environment; put the value in the config under headers", path, source, env)
+			}
+			value := os.Getenv(env)
+			if value == "" {
+				return Config{}, fmt.Errorf("%s: %s names %s, which is not set in brout's environment; put the value in the config under headers", path, source, env)
+			}
+			if err := set(h, value, source); err != nil {
+				return Config{}, err
+			}
+		}
+		cfg.Providers[name] = pc
 	}
 
 	for _, id := range cfg.Routing {
@@ -205,6 +289,15 @@ func (c Config) ProviderNames() []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func xdg(env, fallback string) string {

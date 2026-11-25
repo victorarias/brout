@@ -166,6 +166,32 @@ Set the named variable in the environment of `brout serve`. Use one key setting
 per provider. Every configured provider needs a resolved key, even if it is
 absent from `routing`.
 
+### Use a gateway or a second endpoint
+
+A section with any other name is a custom provider. Set `protocol` to
+`openai` for an endpoint that serves OpenAI's `POST /v1/decisions`, or to
+`systemone` for one that serves `POST /v1/systemone`. Use `headers` for an API
+that authenticates with a header other than `Authorization: Bearer`, or that
+needs extra headers. For example, a gateway that serves OpenAI's API at
+`https://gateway.example.com/openai/v1/decisions` and takes its key in
+`x-api-key`:
+
+```toml
+routing = ["typesafe/jev-latest", "gateway/gpt-6-luna"]
+
+[providers.gateway]
+protocol = "openai"
+base_url = "https://gateway.example.com/openai"
+headers = { x-api-key = "YOUR_GATEWAY_KEY" }
+```
+
+The section name becomes the model ID prefix, so `gateway/gpt-6-luna` routes
+through it, and it can sit beside `[providers.openai]`. For foreground use,
+`headers_env = { x-api-key = "GATEWAY_KEY" }` reads the value from the
+environment. A header may be set only once, ignoring case, and `api_key` sets
+`Authorization`. See the [config reference](docs/reference.md#config) for every
+rule.
+
 Omit `model` or send `"model": "auto"` to try the routing list in order.
 brout skips models whose known limits reject the request, then tries the rest.
 A connection error, an attempt timeout, HTTP 401, 402, 403, 429, or any 5xx
@@ -249,8 +275,9 @@ SDKs' compressed requests.
 
 Stop a foreground `brout serve` with Ctrl-C before installing the agent.
 LaunchAgents do not inherit your shell's environment. Put provider keys directly
-in the config as `api_key`; `brout service install` rejects `api_key_env`, even
-when the installing shell has that variable.
+in the config as `api_key` or under `headers`; `brout service install` rejects
+`api_key_env` and `headers_env`, even when the installing shell has those
+variables.
 
 ```sh
 brout service install
